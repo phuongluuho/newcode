@@ -7,17 +7,6 @@ echo "Simulating CPU consumption..."
 stress --cpu 2 --timeout 600 &
 
 # Fake memory consumption
-#!/binPU consumption
-[ec2-user@ip-172-31-24-40 system-stress]$ cat simulate_stress.sh 
-#!/bin/bash
-
-# Fake CPU consumption
-echo "Simulating CPU consumption..."
-# Start a background process that will consume CPU using the `stress` command
-# If `stress` is not installed, use: sudo dnf install stress
-stress --cpu 2 --timeout 600 &
-
-# Fake memory consumption
 echo "Simulating memory consumption..."
 # Start a background process to consume memory
 # Allocate 2GB of memory for simulation
