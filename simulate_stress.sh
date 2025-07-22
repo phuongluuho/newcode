@@ -1,38 +1,46 @@
 #!/bin/bash
 
-# Fake CPU consumption
-echo "Simulating CPU consumption..."
-# Start a background process that will consume CPU using the `stress` command
-# If `stress` is not installed, use: sudo dnf install stress
+# Script to simulate system load for monitoring/logging testing on CentOS 9
+
+# Check if stress is installed
+if ! command -v stress &> /dev/null; then
+    echo "stress' is not installed. Please install it with: sudo dnf install -y stress"
+    exit 1
+fi
+
+# Log start of simulation
+logger "=== Starting system stress simulation ==="
+
+# Simulate CPU load
+echo "Simulating CPU load..."
 stress --cpu 2 --timeout 600 &
 
-# Fake memory consumption
-echo "Simulating memory consumption..."
-# Start a background process to consume memory
-# Allocate 2GB of memory for simulation
+# Simulate memory usage
+echo "Simulating memory usage (2GB)..."
 stress --vm 2 --vm-bytes 2G --timeout 600 &
 
-# Fake disk usage
-echo "Simulating disk consumption..."
-# Create a directory to store large files
+# Simulate disk usage
+echo "Simulating disk usage..."
 mkdir -p /tmp/fake-disk
-# Create 1GB of random data in a file (repeat to increase disk usage)
 for i in {1..10}; do
-    dd if=/dev/urandom of=/tmp/fake-disk/fakefile$i bs=1M count=100 oflag=sync
+    dd if=/dev/urandom of=/tmp/fake-disk/fakefile$i bs=1M count=100 oflag=sync status=none
 done
 
-# Simulate system activity to show in `logwatch` and `journalctl`
-echo "Simulating system activity for logwatch and journalctl..."
-# Generate random system logs by simulating some activity
+# Generate fake system log entries
+echo "Generating fake log entries (5 entries)..."
 for i in {1..5}; do
-    logger "Fake log entry #$i"
+    logger "Fake log entry #$i from simulate_stress.sh"
     sleep 1
 done
 
-echo "Simulation is running. You can now check htop, logwatch, and Cockpit to observe the resource consumption."
+# Log end of simulation
+logger "=== Completed system stress simulation ==="
 
-# Instructions to user
-echo -e "\nYou can now use the following commands to observe the effects of the simulation:"
-echo "1. Run 'htop' to observe CPU and memory usage."
-echo "2. Use 'logwatch' to see the generated log entries."
-echo "3. Open Cockpit in your browser to observe system health at: https://<your-server-ip>:9090"clear
+# Instructions to the user
+echo -e "\n Simulation completed. You can now:"
+echo "1. Run 'htop' or 'top' to observe CPU and memory usage."
+echo "2. Use 'df -h' and 'du -sh /tmp/fake-disk' to check disk usage."
+echo "3. Check logs with 'journalctl -b' or 'journalctl -u sshd'."
+echo "4. Open Cockpit in your browser at: https://<your-server-ip>:9090"
+
+exit 0
