@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Deploy WordPress on EC2 with RDS MySQL inside a VPC, including public & private subnets.
+  Optimized for learning and AWS exam practice.
+
+Parameters:
+  DBName:
+    Description: MySQL DB name
+    Type: String
+    Default: wordpressdb
+  DBUsername:
+    Description: MySQL admin username
+    Type: String
+    MinLength: 5
+  DBPassword:
+    Description: MySQL password (min 8 chars)
+    Type: String
+    NoEcho: true
+    MinLength: 8
+  KeyName:
+    Description: Existing EC2 KeyPair for SSH
+    Type: AWS::EC2::KeyPair::KeyName
+  LatestAmiId:
+    Description: Amazon Linux 2023 Minimal AMI (via SSM)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-minimal-kernel-default-x86_64'
+
+Resources:
+  # VPC and Internet connectivity
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Subnets (1 public, 1 private in different AZs)
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+
+  # Routing for public subnet
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    DependsOn: AttachGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Groups
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP (80) and SSH (22) from Internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH from anywhere (limit in production)
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from anywhere
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL from WebServer SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          Description: MySQL from WebServer
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  # EC2 Instance (WordPress)
+  WordPressInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref WebServerSecurityGroup]
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash -xe
+            # Install Apache, PHP, WordPress and configure DB connection
+            dnf upgrade -y
+            dnf install -y httpd wget php php-fpm php-mysqli php-json
+            systemctl enable httpd --now
+            wget https://wordpress.org/latest.tar.gz -O /tmp/latest.tar.gz
+            tar -xzf /tmp/latest.tar.gz -C /tmp
+            cp -r /tmp/wordpress/* /var/www/html/
+            chown -R apache:apache /var/www/html
+            cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+            sed -i "s/database_name_here/${DBName}/" /var/www/html/wp-config.php
+            sed -i "s/username_here/${DBUsername}/" /var/www/html/wp-config.php
+            sed -i "s/password_here/${DBPassword}/" /var/www/html/wp-config.php
+            sed -i "s/localhost/${MyDatabase.Endpoint.Address}/" /var/www/html/wp-config.php
+            systemctl restart httpd
+
+  # RDS MySQL (Single-AZ, Free Tier-eligible)
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet
+        - !Ref PublicSubnet
+
+  MyDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: "8.0"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      StorageType: gp2
+      DeletionProtection: false
+
+Outputs:
+  WebServerPublicIP:
+    Description: Public IP of WordPress EC2
+    Value: !GetAtt WordPressInstance.PublicIp
+  WebServerURL:
+    Description: Website URL
+    Value: !Sub "http://${WordPressInstance.PublicIp}/"
+  RDSEndpoint:
+    Description: RDS MySQL Endpoint
+    Value: !GetAtt MyDatabase.Endpoint.Address
+  RDSPort:
+    Description: RDS MySQL Port
+    Value: !GetAtt MyDatabase.Endpoint.Port
